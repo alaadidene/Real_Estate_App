@@ -28,6 +28,7 @@
     "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
     "RunOnceActivity.git.unshallow": "true",
     "git-widget-placeholder": "main",
+    "ignore.virus.scanning.warn.message": "true",
     "junie.onboarding.icon.badge.shown": "true",
     "last_opened_file_path": "/media/bayrem/DATA1/ReactNative_Projects/RealEstate_app",
     "node.js.detected.package.eslint": "true",
@@ -53,7 +54,7 @@
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-js-predefined-d6986cc7102b-3aa1da707db6-JavaScript-WS-252.27397.92" />
+        <option value="bundled-js-predefined-d6986cc7102b-9c94529fcfe0-JavaScript-WS-252.26199.162" />
       </set>
     </attachedChunks>
   </component>
@@ -68,6 +69,7 @@
       <workItem from="1762894234443" duration="6303000" />
       <workItem from="1762943549576" duration="15748000" />
       <workItem from="1763021125289" duration="827000" />
+      <workItem from="1763125416901" duration="53000" />
     </task>
     <servers />
   </component>
