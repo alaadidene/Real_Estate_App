@@ -18,16 +18,16 @@ const TabIcon = ({ focused, icon, title, badge }: {
                 className="size-7"
                 style={{ tintColor: focused ? "#0061FF" : "#748C94" }}
             />
-            {badge && badge > 0 && (
+            {badge != null && badge > 0 && (
                 <View className="absolute -top-1 -right-1 bg-red-500 rounded-full min-w-[18px] h-[18px] items-center justify-center px-1">
                     <Text className="text-white text-xs font-bold">
-                        {badge > 99 ? '99+' : String(badge || 0)}
+                        {badge > 99 ? '99+' : badge.toString()}
                     </Text>
                 </View>
             )}
         </View>
         <Text className={`${focused ? "text-primary-300 font-rubik-medium" : "text-black-200 font-rubik"} text-xs w-full text-center mt-1`}>
-            {title || 'Tab'}
+            {title}
         </Text>
     </View>
 );
@@ -113,6 +113,18 @@ const TabsLayout = () => {
                 />
                 <Tabs.Screen
                     name="edit-profile"
+                    options={{
+                        href: null,
+                    }}
+                />
+                <Tabs.Screen
+                    name="bookings"
+                    options={{
+                        href: null,
+                    }}
+                />
+                <Tabs.Screen
+                    name="booking-requests"
                     options={{
                         href: null,
                     }}

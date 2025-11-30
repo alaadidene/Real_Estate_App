@@ -90,7 +90,16 @@ const Profile = () => {
                             title="My Listings" 
                             onPress={() => router.push({ pathname: '/(root)/(tabs)/my-listings' } as any)}
                         />
-                        <SettingsItem icon={icons.calendar} title="My Bookings" />
+                        <SettingsItem 
+                            icon={icons.calendar} 
+                            title="My Bookings" 
+                            onPress={() => router.push({ pathname: '/(root)/(tabs)/bookings' } as any)}
+                        />
+                        <SettingsItem 
+                            icon={icons.receipt} 
+                            title="Booking Requests" 
+                            onPress={() => router.push({ pathname: '/(root)/(tabs)/booking-requests' } as any)}
+                        />
                         <SettingsItem
                             icon={icons.people}
                             title="Seed Data (dev)"

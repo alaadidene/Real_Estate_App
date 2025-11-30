@@ -4,7 +4,7 @@ import Constants from "expo-constants";
 import * as Linking from "expo-linking";
 import { openAuthSessionAsync } from "expo-web-browser";
 import { Platform } from "react-native";
-import { Account, Avatars, Client, Databases, ID, OAuthProvider, Query, Storage } from "react-native-appwrite";
+import { Account, Avatars, Client, Databases, ID, Models, OAuthProvider, Query, Storage } from "react-native-appwrite";
 
 // Export Query pour l'utiliser dans d'autres fichiers
 export { Query };
@@ -52,6 +52,68 @@ export interface TypingStatusDocument {
   isTyping: boolean;
   lastTypingAt?: string;
 }
+
+// Booking & Payments Types
+export type BookingStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled' | 'completed';
+export type PaymentStatus = 'unpaid' | 'paid' | 'refunded' | 'partially_refunded';
+export type PayoutStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface BookingDocument extends Models.Document {
+  propertyId: string;
+  guestId: string;
+  agentId: string;
+  checkInDate: string; // ISO 8601
+  checkOutDate: string; // ISO 8601
+  numberOfGuests: number;
+  numberOfNights: number;
+  pricePerNight: number;
+  subtotal: number;
+  serviceFee: number; // 10%
+  totalPrice: number;
+  status: BookingStatus;
+  paymentStatus: PaymentStatus;
+  specialRequests?: string;
+  rejectionReason?: string;
+  cancelledBy?: 'guest' | 'agent';
+  confirmedAt?: string;
+  cancelledAt?: string;
+  // Populated relationships
+  property?: PropertyDocument;
+  guest?: any;
+  agent?: any;
+}
+
+export interface PaymentDocument extends Models.Document {
+  bookingId: string;
+  userId: string;
+  amount: number;
+  currency: string;
+  paymentMethod: string; // 'card', 'paypal', etc.
+  paymentGateway: string; // 'stripe', 'paypal'
+  transactionId: string;
+  status: 'pending' | 'succeeded' | 'failed' | 'refunded' | 'partially_refunded';
+  receiptUrl?: string;
+  refundAmount?: number;
+  refundReason?: string;
+  refundedAt?: string;
+  gatewayResponse?: string; // JSON string
+  // Populated relationships
+  booking?: BookingDocument;
+}
+
+export interface PayoutDocument extends Models.Document {
+  agentId: string;
+  amount: number;
+  currency: string;
+  status: PayoutStatus;
+  bookingIds: string[];
+  payoutMethod?: string; // 'bank_transfer', 'paypal'
+  scheduledDate: string;
+  completedDate?: string;
+  // Populated relationships
+  agent?: any;
+}
+
 export const config = {
   endpoint: process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT,
   projectId: process.env.EXPO_PUBLIC_APPWRITE_PROJECT_ID,
@@ -66,7 +128,11 @@ export const config = {
   conversationsCollectionId: process.env.EXPO_PUBLIC_APPWRITE_CONVERSATIONS_COLLECTION_ID || "conversations",
   messagesCollectionId: process.env.EXPO_PUBLIC_APPWRITE_MESSAGES_COLLECTION_ID || "messages",
   typingStatusCollectionId: process.env.EXPO_PUBLIC_APPWRITE_TYPING_STATUS_COLLECTION_ID || "typing_status",
-  chatImagesBucketId: process.env.EXPO_PUBLIC_APPWRITE_CHAT_IMAGES_BUCKET_ID || "chat-images",
+  chatImagesBucketId: process.env.EXPO_PUBLIC_APPWRITE_CHAT_IMAGES_BUCKET_ID || "profile-images", // Use profile-images as default
+  // Booking & Payments Configuration
+  bookingsCollectionId: process.env.EXPO_PUBLIC_APPWRITE_BOOKINGS_COLLECTION_ID || "bookings",
+  paymentsCollectionId: process.env.EXPO_PUBLIC_APPWRITE_PAYMENTS_COLLECTION_ID || "payments",
+  payoutsCollectionId: process.env.EXPO_PUBLIC_APPWRITE_PAYOUTS_COLLECTION_ID || "payouts",
 };
 
 // Determine correct platform identifier for Appwrite origin validation.
@@ -1225,9 +1291,13 @@ export async function markMessageAsRead(messageId: string): Promise<{ success: b
 // Upload chat image
 export async function uploadChatImage(imageUri: string): Promise<{ success: boolean; fileUrl?: string; fileId?: string; error?: any }> {
   try {
+    console.log("Uploading chat image...");
     const filename = imageUri.split('/').pop() || `chat-${Date.now()}.jpg`;
+    console.log("Filename:", filename);
+    
     const response = await fetch(imageUri);
     const blob = await response.blob();
+    console.log("Blob size:", blob.size, "type:", blob.type);
     
     const fileObject = {
       name: filename,
@@ -1239,13 +1309,18 @@ export async function uploadChatImage(imageUri: string): Promise<{ success: bool
       arrayBuffer: blob.arrayBuffer?.bind(blob),
     };
 
+    // Use profile images bucket if chat images bucket doesn't exist
+    const bucketId = config.chatImagesBucketId || config.profileImagesBucketId!;
+    console.log("Using bucket:", bucketId);
+
     const uploadedFile = await storage.createFile(
-      config.chatImagesBucketId!,
+      bucketId,
       ID.unique(),
       fileObject as any
     );
 
-    const fileUrl = `${config.endpoint}/storage/buckets/${config.chatImagesBucketId}/files/${uploadedFile.$id}/view?project=${config.projectId}`;
+    console.log("File uploaded successfully:", uploadedFile.$id);
+    const fileUrl = `${config.endpoint}/storage/buckets/${bucketId}/files/${uploadedFile.$id}/view?project=${config.projectId}`;
 
     return {
       success: true,
@@ -1254,6 +1329,7 @@ export async function uploadChatImage(imageUri: string): Promise<{ success: bool
     };
   } catch (error) {
     console.error("Error uploading chat image:", error);
+    console.error("Error details:", JSON.stringify(error, null, 2));
     return { success: false, error };
   }
 }
@@ -1427,5 +1503,386 @@ export async function getUnreadMessageCount(): Promise<number> {
   } catch (error) {
     console.error("Error getting unread message count:", error);
     return 0;
+  }
+}
+
+// =============================================================================
+// BOOKING & PAYMENTS FUNCTIONS
+// =============================================================================
+
+/**
+ * Check if dates are available for a property
+ * Returns true if the dates are available, false if there's a conflict
+ */
+export async function checkAvailability(
+  propertyId: string,
+  checkInDate: string,
+  checkOutDate: string,
+  excludeBookingId?: string
+): Promise<boolean> {
+  try {
+    const checkIn = new Date(checkInDate);
+    const checkOut = new Date(checkOutDate);
+
+    // Query for overlapping bookings with confirmed or pending status
+    const queries = [
+      Query.equal("propertyId", propertyId),
+      Query.or([
+        Query.equal("status", "confirmed"),
+        Query.equal("status", "pending"),
+      ]),
+    ];
+
+    if (excludeBookingId) {
+      queries.push(Query.notEqual("$id", excludeBookingId));
+    }
+
+    const bookings = await databases.listDocuments<BookingDocument>(
+      config.databaseId!,
+      config.bookingsCollectionId!,
+      queries
+    );
+
+    // Check for date overlaps
+    for (const booking of bookings.documents) {
+      const existingCheckIn = new Date(booking.checkInDate);
+      const existingCheckOut = new Date(booking.checkOutDate);
+
+      // Check if dates overlap
+      const hasOverlap = checkIn < existingCheckOut && checkOut > existingCheckIn;
+      
+      if (hasOverlap) {
+        return false; // Dates not available
+      }
+    }
+
+    return true; // Dates are available
+  } catch (error) {
+    console.error("Error checking availability:", error);
+    throw error;
+  }
+}
+
+/**
+ * Calculate booking price details
+ */
+export function calculateBookingPrice(
+  pricePerNight: number,
+  checkInDate: string,
+  checkOutDate: string
+): { numberOfNights: number; subtotal: number; serviceFee: number; totalPrice: number } {
+  const checkIn = new Date(checkInDate);
+  const checkOut = new Date(checkOutDate);
+  
+  const numberOfNights = Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24));
+  const subtotal = pricePerNight * numberOfNights;
+  const serviceFee = subtotal * 0.1; // 10% service fee
+  const totalPrice = subtotal + serviceFee;
+
+  return {
+    numberOfNights,
+    subtotal,
+    serviceFee,
+    totalPrice,
+  };
+}
+
+/**
+ * Create a new booking request
+ */
+export async function createBooking(bookingData: {
+  propertyId: string;
+  guestId: string;
+  agentId: string;
+  checkInDate: string;
+  checkOutDate: string;
+  numberOfGuests: number;
+  pricePerNight: number;
+  specialRequests?: string;
+}): Promise<BookingDocument> {
+  try {
+    // Validate dates
+    const checkIn = new Date(bookingData.checkInDate);
+    const checkOut = new Date(bookingData.checkOutDate);
+    const now = new Date();
+
+    if (checkIn < now) {
+      throw new Error("Check-in date must be in the future");
+    }
+
+    if (checkOut <= checkIn) {
+      throw new Error("Check-out date must be after check-in date");
+    }
+
+    // Check availability
+    const isAvailable = await checkAvailability(
+      bookingData.propertyId,
+      bookingData.checkInDate,
+      bookingData.checkOutDate
+    );
+
+    if (!isAvailable) {
+      throw new Error("Selected dates are not available");
+    }
+
+    // Calculate pricing
+    const priceDetails = calculateBookingPrice(
+      bookingData.pricePerNight,
+      bookingData.checkInDate,
+      bookingData.checkOutDate
+    );
+
+    // Create booking document
+    const booking = await databases.createDocument<BookingDocument>(
+      config.databaseId!,
+      config.bookingsCollectionId!,
+      ID.unique(),
+      {
+        ...bookingData,
+        ...priceDetails,
+        status: "pending",
+        paymentStatus: "unpaid",
+      }
+    );
+
+    console.log("Booking created successfully:", booking.$id);
+    return booking;
+  } catch (error) {
+    console.error("Error creating booking:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get bookings for a user (as guest)
+ */
+export async function getUserBookings(userId: string): Promise<BookingDocument[]> {
+  try {
+    const bookings = await databases.listDocuments<BookingDocument>(
+      config.databaseId!,
+      config.bookingsCollectionId!,
+      [
+        Query.equal("guestId", userId),
+        Query.orderDesc("$createdAt"),
+        Query.limit(100),
+      ]
+    );
+
+    return bookings.documents;
+  } catch (error) {
+    console.error("Error fetching user bookings:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get booking requests for an agent
+ */
+export async function getAgentBookings(agentId: string, status?: BookingStatus): Promise<BookingDocument[]> {
+  try {
+    const queries = [
+      Query.equal("agentId", agentId),
+      Query.orderDesc("$createdAt"),
+      Query.limit(100),
+    ];
+
+    if (status) {
+      queries.push(Query.equal("status", status));
+    }
+
+    const bookings = await databases.listDocuments<BookingDocument>(
+      config.databaseId!,
+      config.bookingsCollectionId!,
+      queries
+    );
+
+    return bookings.documents;
+  } catch (error) {
+    console.error("Error fetching agent bookings:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get a single booking by ID
+ */
+export async function getBooking(bookingId: string): Promise<BookingDocument> {
+  try {
+    const booking = await databases.getDocument<BookingDocument>(
+      config.databaseId!,
+      config.bookingsCollectionId!,
+      bookingId
+    );
+
+    return booking;
+  } catch (error) {
+    console.error("Error fetching booking:", error);
+    throw error;
+  }
+}
+
+/**
+ * Update booking status (accept/reject by agent)
+ */
+export async function updateBookingStatus(
+  bookingId: string,
+  status: BookingStatus,
+  rejectionReason?: string
+): Promise<BookingDocument> {
+  try {
+    const updateData: any = { status };
+
+    if (status === "confirmed") {
+      updateData.confirmedAt = new Date().toISOString();
+    }
+
+    if (status === "rejected" && rejectionReason) {
+      updateData.rejectionReason = rejectionReason;
+    }
+
+    const booking = await databases.updateDocument<BookingDocument>(
+      config.databaseId!,
+      config.bookingsCollectionId!,
+      bookingId,
+      updateData
+    );
+
+    console.log(`Booking ${bookingId} status updated to ${status}`);
+    return booking;
+  } catch (error) {
+    console.error("Error updating booking status:", error);
+    throw error;
+  }
+}
+
+/**
+ * Cancel a booking
+ */
+export async function cancelBooking(
+  bookingId: string,
+  cancelledBy: 'guest' | 'agent',
+  reason?: string
+): Promise<BookingDocument> {
+  try {
+    const booking = await databases.updateDocument<BookingDocument>(
+      config.databaseId!,
+      config.bookingsCollectionId!,
+      bookingId,
+      {
+        status: "cancelled",
+        cancelledBy,
+        cancelledAt: new Date().toISOString(),
+        rejectionReason: reason,
+      }
+    );
+
+    console.log(`Booking ${bookingId} cancelled by ${cancelledBy}`);
+    return booking;
+  } catch (error) {
+    console.error("Error cancelling booking:", error);
+    throw error;
+  }
+}
+
+/**
+ * Update payment status after successful payment
+ */
+export async function updateBookingPaymentStatus(
+  bookingId: string,
+  paymentStatus: PaymentStatus
+): Promise<BookingDocument> {
+  try {
+    const booking = await databases.updateDocument<BookingDocument>(
+      config.databaseId!,
+      config.bookingsCollectionId!,
+      bookingId,
+      { paymentStatus }
+    );
+
+    console.log(`Booking ${bookingId} payment status updated to ${paymentStatus}`);
+    return booking;
+  } catch (error) {
+    console.error("Error updating payment status:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get bookings for a specific property (for calendar view)
+ */
+export async function getPropertyBookings(propertyId: string): Promise<BookingDocument[]> {
+  try {
+    const bookings = await databases.listDocuments<BookingDocument>(
+      config.databaseId!,
+      config.bookingsCollectionId!,
+      [
+        Query.equal("propertyId", propertyId),
+        Query.or([
+          Query.equal("status", "confirmed"),
+          Query.equal("status", "pending"),
+        ]),
+        Query.orderAsc("checkInDate"),
+      ]
+    );
+
+    return bookings.documents;
+  } catch (error) {
+    console.error("Error fetching property bookings:", error);
+    throw error;
+  }
+}
+
+/**
+ * Calculate refund amount based on cancellation policy
+ */
+export function calculateRefund(
+  booking: BookingDocument,
+  cancelledBy: 'guest' | 'agent'
+): { refundAmount: number; refundPercentage: number; policy: string } {
+  // If agent cancels, full refund
+  if (cancelledBy === 'agent') {
+    return {
+      refundAmount: booking.totalPrice,
+      refundPercentage: 100,
+      policy: 'full_refund_agent_cancellation',
+    };
+  }
+
+  // If payment not made yet, no refund needed
+  if (booking.paymentStatus !== 'paid') {
+    return {
+      refundAmount: 0,
+      refundPercentage: 0,
+      policy: 'no_payment_made',
+    };
+  }
+
+  // Calculate days until check-in
+  const now = new Date();
+  const checkIn = new Date(booking.checkInDate);
+  const daysUntilCheckIn = Math.ceil((checkIn.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+  // Cancellation policy
+  if (daysUntilCheckIn >= 7) {
+    // Full refund minus service fee
+    return {
+      refundAmount: booking.subtotal, // Refund without service fee
+      refundPercentage: 100,
+      policy: 'flexible_full_refund',
+    };
+  } else if (daysUntilCheckIn >= 3) {
+    // 50% refund
+    return {
+      refundAmount: booking.totalPrice * 0.5,
+      refundPercentage: 50,
+      policy: 'moderate_half_refund',
+    };
+  } else {
+    // No refund
+    return {
+      refundAmount: 0,
+      refundPercentage: 0,
+      policy: 'strict_no_refund',
+    };
   }
 }
