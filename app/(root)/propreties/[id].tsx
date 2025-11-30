@@ -1,6 +1,5 @@
-// FORCE RELOAD: Updated at 2025-11-30 06:59
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -8,30 +7,26 @@ import {
   FlatList,
   Image,
   Linking,
-  Modal,
   Platform,
-  Pressable,
   ScrollView,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 
-import BookingCalendar from "@/components/BookingCalendar";
 import Comment from "@/components/Comment";
+import DateRangePicker from "@/components/DateRangePicker";
 import FavoriteButton from "@/components/FavoriteButton";
 import PropertiesMap from "@/components/PropertiesMap";
 import { facilities } from "@/constants/data";
 import icons from "@/constants/icons";
 import images from "@/constants/images";
 
-import { createBooking, deleteProperty, getAgentById, getCurrentUser, getPropertyById } from "@/lib/appwrite";
+import { createBooking, createOrGetConversation, deleteProperty, getCurrentUser, getPropertyBookings, getPropertyById } from "@/lib/appwrite";
+import { useGlobalContext } from "@/lib/global-provider";
 import { useAppwrite } from "@/lib/useAppwrite";
 
 const Property = () => {
-  // CRITICAL DEBUG MARKER - Screen rendering check
-  console.error('🔴🔴🔴 DETAIL SCREEN LOADED: propreties/[id].tsx 🔴🔴🔴');
   const { id } = useLocalSearchParams<{ id?: string }>();
 
   const windowHeight = Dimensions.get("window").height;
@@ -44,19 +39,13 @@ const Property = () => {
     },
   });
 
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [unavailableDates, setUnavailableDates] = useState<string[]>([]);
+
   const router = useRouter();
+  const { user } = useGlobalContext();
   const [isOwner, setIsOwner] = useState(false);
   const [agentData, setAgentData] = useState<any>(null);
-  
-  // Booking modal state
-  const [showBookingModal, setShowBookingModal] = useState(false);
-  const [checkInDate, setCheckInDate] = useState("");
-  const [checkOutDate, setCheckOutDate] = useState("");
-  const [numberOfNights, setNumberOfNights] = useState(0);
-  const [totalPrice, setTotalPrice] = useState(0);
-  const [numberOfGuests, setNumberOfGuests] = useState(1);
-  const [specialRequests, setSpecialRequests] = useState("");
-  const [submittingBooking, setSubmittingBooking] = useState(false);
 
   // Get all images from the images array
   const allImages = property ? (property.images || []).filter(Boolean) : [];
@@ -67,23 +56,44 @@ const Property = () => {
   }
 
   useEffect(() => {
+    const loadUnavailable = async () => {
+      if (!property) return;
+      try {
+        const bookings = await getPropertyBookings(property.$id);
+        const blocked: string[] = [];
+
+        bookings.forEach((b: any) => {
+          try {
+            const start = new Date(b.checkInDate);
+            const end = new Date(b.checkOutDate);
+            const cur = new Date(start);
+            while (cur < end) {
+              blocked.push(cur.toISOString().split('T')[0]);
+              cur.setDate(cur.getDate() + 1);
+            }
+          } catch (e) {
+            // ignore
+          }
+        });
+
+        setUnavailableDates(Array.from(new Set(blocked)));
+      } catch (e) {
+        console.error('Error loading property bookings:', e);
+      }
+    };
+
+    loadUnavailable();
+
     const checkOwnerAndLoadAgent = async () => {
       const user = await getCurrentUser();
       if (!property) return;
       
-      console.log('=== OWNERSHIP CHECK ===');
       console.log('Property agent data:', property.agent);
-      console.log('Current user:', user?.$id);
       
       // Check if current user is the owner
       const agentId = typeof property.agent === 'string' ? property.agent : property.agent?.$id || property.agent?.id;
-      console.log('Agent ID:', agentId);
-      console.log('User ID:', user?.$id);
-      console.log('Is Owner:', user && agentId === user.$id);
-      
       if (user && agentId === user.$id) {
         setIsOwner(true);
-        console.log('✅ User IS owner - button will be disabled');
         // Use current user data for agent info
         const userData = {
           name: user.name,
@@ -95,7 +105,6 @@ const Property = () => {
         setAgentData(userData);
       } else {
         setIsOwner(false);
-        console.log('❌ User is NOT owner - button should work');
         // Use property agent data
         if (property.agent && typeof property.agent === 'object') {
           const propAgentData = {
@@ -106,28 +115,40 @@ const Property = () => {
           };
           console.log('Setting agent data from property:', propAgentData);
           setAgentData(propAgentData);
-        } else if (agentId) {
-          // Fallback: fetch agent document by ID from Appwrite
-          try {
-            const fetched = await getAgentById(agentId);
-            if (fetched) {
-              const fetchedAgent = {
-                name: fetched.name,
-                avatar: fetched.avatar,
-                email: fetched.email,
-                phone: fetched.phone || ''
-              };
-              console.log('Fetched agent by ID:', fetchedAgent);
-              setAgentData(fetchedAgent);
-            }
-          } catch (e) {
-            console.warn('Failed to fetch agent by ID:', e);
-          }
         }
       }
     };
     checkOwnerAndLoadAgent();
   }, [property]);
+
+  const handleSelectDates = async (checkIn: string, checkOut: string, priceDetails: any) => {
+    try {
+      const user = await getCurrentUser();
+      if (!user) {
+        Alert.alert('Connexion requise', 'Vous devez être connecté pour réserver');
+        router.push('/sign-in' as any);
+        return;
+      }
+
+      const agentId = typeof property.agent === 'string' ? property.agent : property.agent?.$id || property.agent?.id;
+
+      const booking = await createBooking({
+        propertyId: property.$id,
+        guestId: user.$id,
+        agentId: agentId,
+        checkInDate: checkIn,
+        checkOutDate: checkOut,
+        numberOfGuests: 1,
+        pricePerNight: Number(property.price),
+      } as any);
+
+      Alert.alert('Success', 'Booking request created successfully');
+      router.push('/(root)/(tabs)/bookings' as any);
+    } catch (error: any) {
+      console.error('Error creating booking:', error);
+      Alert.alert('Error', error?.message || 'Failed to create booking');
+    }
+  };
 
   const handleCall = () => {
     const phone = agentData?.phone;
@@ -148,106 +169,41 @@ const Property = () => {
       .catch((err) => console.error('Error opening phone dialer:', err));
   };
 
-  const handleBookNow = () => {
-    console.log("=== BOOK NOW PRESSED ===");
-    console.log("isOwner:", isOwner);
-    console.log("property:", property?.$id);
-    
-    Alert.alert("Debug", `Button pressed! isOwner: ${isOwner}`);
-    
-    if (isOwner) {
-      Alert.alert("Cannot Book", "You cannot book your own property");
-      return;
-    }
-    
-    console.log("Opening booking modal...");
-    setShowBookingModal(true);
-  };
-
-  const handleDatesSelected = (
-    checkIn: string,
-    checkOut: string,
-    nights: number,
-    total: number
-  ) => {
-    setCheckInDate(checkIn);
-    setCheckOutDate(checkOut);
-    setNumberOfNights(nights);
-    setTotalPrice(total);
-  };
-
-  const handleSubmitBooking = async () => {
-    if (!checkInDate || !checkOutDate) {
-      Alert.alert("Missing Dates", "Please select check-in and check-out dates");
+  const handleStartChat = async () => {
+    if (!user) {
+      Alert.alert('Connexion requise', 'Vous devez être connecté pour envoyer un message');
       return;
     }
 
-    if (numberOfGuests < 1) {
-      Alert.alert("Invalid Guests", "Please enter at least 1 guest");
+    const agentId = agentData?.$id || property?.agent?.$id || property?.agent;
+    if (!agentId) {
+      Alert.alert('Erreur', 'Impossible de contacter l\'agent');
+      return;
+    }
+
+    if (agentId === user.$id) {
+      Alert.alert('Info', 'Vous ne pouvez pas vous envoyer un message à vous-même');
       return;
     }
 
     try {
-      setSubmittingBooking(true);
-      const user = await getCurrentUser();
+      const result = await createOrGetConversation(agentId, property?.$id);
       
-      if (!user) {
-        Alert.alert("Authentication Required", "Please sign in to book a property");
-        router.push("/sign-in" as any);
-        return;
-      }
-
-      if (!property) {
-        Alert.alert("Error", "Property not found");
-        return;
-      }
-
-      const agentId = typeof property.agent === 'string' 
-        ? property.agent 
-        : property.agent?.$id || property.agent?.id;
-
-      await createBooking({
-        propertyId: property.$id,
-        guestId: user.$id,
-        agentId: agentId,
-        checkInDate: new Date(checkInDate).toISOString(),
-        checkOutDate: new Date(checkOutDate).toISOString(),
-        numberOfGuests,
-        pricePerNight: property.price,
-        specialRequests,
-      });
-
-      Alert.alert(
-        "Booking Requested",
-        "Your booking request has been sent to the property owner. You will be notified once they respond.",
-        [
-          {
-            text: "View My Bookings",
-            onPress: () => {
-              setShowBookingModal(false);
-              router.push("/(root)/(tabs)/bookings" as any);
-            },
+      if (result.success && result.conversation) {
+        router.push({
+          pathname: '/chat/[id]',
+          params: {
+            id: result.conversation.$id,
+            otherUserId: agentId,
+            propertyId: property?.$id,
           },
-          {
-            text: "OK",
-            onPress: () => setShowBookingModal(false),
-          },
-        ]
-      );
-    } catch (error: any) {
-      console.error("Error creating booking:", error);
-      const errorMsg = error?.message || "Failed to create booking request";
-      
-      if (errorMsg.includes("authorized") || errorMsg.includes("permission")) {
-        Alert.alert(
-          "Permission Error",
-          "Cannot create booking due to permission settings.\\n\\nPlease configure Appwrite:\\n1. Go to Bookings collection\\n2. Settings → Permissions\\n3. Add 'users' role with 'create' permission"
-        );
+        });
       } else {
-        Alert.alert("Booking Failed", errorMsg);
+        Alert.alert('Erreur', 'Impossible de démarrer la conversation');
       }
-    } finally {
-      setSubmittingBooking(false);
+    } catch (error) {
+      console.error('Error starting chat:', error);
+      Alert.alert('Erreur', 'Une erreur est survenue');
     }
   };
 
@@ -268,23 +224,7 @@ const Property = () => {
   }
 
   return (
-    <View className="flex-1">
-      {/* DEBUG: Test button at top */}
-      <TouchableOpacity
-        onPress={() => Alert.alert("TEST", "Top button works!")}
-        style={{
-          position: 'absolute',
-          top: 100,
-          right: 20,
-          zIndex: 9999,
-          backgroundColor: 'red',
-          padding: 10,
-          borderRadius: 5,
-        }}
-      >
-        <Text style={{ color: 'white' }}>TEST</Text>
-      </TouchableOpacity>
-
+    <View>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerClassName="pb-32 bg-white"
@@ -315,7 +255,7 @@ const Property = () => {
               {/* Image indicator dots */}
               {allImages.length > 1 && (
                 <View className="absolute bottom-4 left-0 right-0 flex-row justify-center items-center z-50">
-                  {allImages.map((_: string, index: number) => (
+                  {allImages.map((_: any, index: number) => (
                     <View
                       key={index}
                       className={`h-2 rounded-full mx-1 ${
@@ -446,7 +386,7 @@ const Property = () => {
               </View>
 
               <View className="flex flex-row items-center gap-3">
-                <TouchableOpacity>
+                <TouchableOpacity onPress={handleStartChat}>
                   <Image source={icons.chat} className="size-7" />
                 </TouchableOpacity>
                 <TouchableOpacity onPress={handleCall} disabled={!agentData?.phone}>
@@ -589,175 +529,34 @@ const Property = () => {
         </View>
       </ScrollView>
 
-      <View
-        style={{
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          backgroundColor: 'white',
-          padding: 20,
-          borderTopWidth: 1,
-          borderColor: '#e5e5e5',
-          zIndex: 9999,
-          elevation: 10,
-        }}
-        // Ensure this container captures touches for the booking button
-        pointerEvents="auto"
-      >
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }} pointerEvents="auto">
-          <View style={{ flexDirection: 'column' }}>
-            <Text style={{ fontSize: 12, color: '#666' }}>
+      <View className="absolute bg-white bottom-0 w-full rounded-t-2xl border-t border-r border-l border-primary-200 p-7">
+        <View className="flex flex-row items-center justify-between gap-10">
+          <View className="flex flex-col items-start">
+            <Text className="text-black-200 text-xs font-rubik-medium">
               Price
             </Text>
-            <Text style={{ fontSize: 24, color: '#0061FF', fontWeight: 'bold' }}>
+            <Text
+              numberOfLines={1}
+              className="text-primary-300 text-start text-2xl font-rubik-bold"
+            >
               ${property.price}
             </Text>
           </View>
 
-          <Pressable
-            onPress={() => {
-              console.log('PRESSABLE PRESSED!');
-              Alert.alert('Pressable', 'Button tapped!');
-              handleBookNow();
-            }}
-            disabled={isOwner}
-            style={({ pressed }) => ({
-              flex: 1,
-              marginLeft: 20,
-              backgroundColor: isOwner ? '#ccc' : (pressed ? '#0051d5' : '#0061FF'),
-              paddingVertical: 16,
-              borderRadius: 25,
-              alignItems: 'center',
-              justifyContent: 'center',
-            })}
-          >
-            <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold' }}>
-              {isOwner ? "Your Property" : "BOOK"}
+          <TouchableOpacity onPress={() => setShowDatePicker(true)} className="flex-1 flex flex-row items-center justify-center bg-primary-300 py-3 rounded-full shadow-md shadow-zinc-400">
+            <Text className="text-white text-lg text-center font-rubik-bold">
+              Book Now
             </Text>
-          </Pressable>
+          </TouchableOpacity>
         </View>
       </View>
-
-      {/* Booking Modal */}
-      <Modal
-        visible={showBookingModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowBookingModal(false)}
-      >
-        <View className="flex-1 bg-white">
-          <View className="flex-row items-center justify-between p-5 border-b border-gray-200">
-            <Text className="text-2xl font-rubik-bold text-black-300">
-              Book {property?.name}
-            </Text>
-            <TouchableOpacity onPress={() => setShowBookingModal(false)}>
-              <Text className="text-lg font-rubik-medium text-black-200">✕</Text>
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView className="flex-1 p-5">
-            <BookingCalendar
-              propertyId={property?.$id || ""}
-              pricePerNight={property?.price || 0}
-              onDatesSelected={handleDatesSelected}
-            />
-
-            <View className="bg-white rounded-2xl p-5 mb-5">
-              <Text className="text-xl font-rubik-bold text-black-300 mb-2">
-                Guest Details
-              </Text>
-              
-              <Text className="text-sm font-rubik text-black-200 mb-2">
-                Number of Guests
-              </Text>
-              <View className="flex-row items-center justify-between bg-primary-100 rounded-xl p-4 mb-4">
-                <TouchableOpacity
-                  onPress={() => setNumberOfGuests(Math.max(1, numberOfGuests - 1))}
-                  className="w-10 h-10 items-center justify-center bg-white rounded-full"
-                >
-                  <Text className="text-xl font-rubik-bold text-black-300">-</Text>
-                </TouchableOpacity>
-                <Text className="text-xl font-rubik-bold text-black-300">
-                  {numberOfGuests}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => setNumberOfGuests(numberOfGuests + 1)}
-                  className="w-10 h-10 items-center justify-center bg-white rounded-full"
-                >
-                  <Text className="text-xl font-rubik-bold text-black-300">+</Text>
-                </TouchableOpacity>
-              </View>
-
-              <Text className="text-sm font-rubik text-black-200 mb-2">
-                Special Requests (Optional)
-              </Text>
-              <TextInput
-                value={specialRequests}
-                onChangeText={setSpecialRequests}
-                placeholder="Any special requirements?"
-                multiline
-                numberOfLines={4}
-                className="bg-primary-100 rounded-xl p-4 text-black-300 font-rubik"
-                style={{ textAlignVertical: 'top' }}
-              />
-            </View>
-
-            {checkInDate && checkOutDate && (
-              <View className="bg-primary-100 rounded-2xl p-5 mb-5">
-                <Text className="text-xl font-rubik-bold text-black-300 mb-3">
-                  Booking Summary
-                </Text>
-                <View className="flex-row justify-between mb-2">
-                  <Text className="text-sm font-rubik text-black-200">
-                    {numberOfNights} nights × ${property?.price}
-                  </Text>
-                  <Text className="text-sm font-rubik text-black-300">
-                    ${(numberOfNights * (property?.price || 0)).toFixed(2)}
-                  </Text>
-                </View>
-                <View className="flex-row justify-between mb-2">
-                  <Text className="text-sm font-rubik text-black-200">
-                    Service fee (10%)
-                  </Text>
-                  <Text className="text-sm font-rubik text-black-300">
-                    ${(numberOfNights * (property?.price || 0) * 0.1).toFixed(2)}
-                  </Text>
-                </View>
-                <View className="h-px bg-black-100 my-2" />
-                <View className="flex-row justify-between">
-                  <Text className="text-lg font-rubik-bold text-black-300">
-                    Total
-                  </Text>
-                  <Text className="text-lg font-rubik-bold text-primary-300">
-                    ${totalPrice.toFixed(2)} 
-                  </Text>
-                </View>
-              </View>
-            )}
-          </ScrollView>
-
-          <View className="p-5 border-t border-gray-200">
-            <TouchableOpacity
-              onPress={handleSubmitBooking}
-              disabled={!checkInDate || !checkOutDate || submittingBooking}
-              className={`py-4 rounded-full ${
-                !checkInDate || !checkOutDate || submittingBooking
-                  ? "bg-gray-300"
-                  : "bg-primary-300"
-              }`}
-            >
-              {submittingBooking ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text className="text-white text-lg text-center font-rubik-bold">
-                  Request to Book
-                </Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      <DateRangePicker
+        visible={showDatePicker}
+        onClose={() => setShowDatePicker(false)}
+        onSelectDates={handleSelectDates}
+        pricePerNight={Number(property.price)}
+        unavailableDates={unavailableDates}
+      />
     </View>
   );
 };

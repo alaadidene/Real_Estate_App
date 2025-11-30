@@ -205,13 +205,18 @@ async function seed() {
             normalisedFacilities.push(...getRandomFacilitySubset());
           }
 
-          const joined = normalisedFacilities.join(',');
-          if (typeof existing.facilities !== 'string' || existing.facilities !== joined) {
-            updates.facilities = joined;
+          // Update only if different
+          const same =
+            normalisedFacilities.length === existing.facilities.length &&
+            normalisedFacilities.every((v, i) => v === existing.facilities[i]);
+
+          if (!same) {
+            updates.facilities = normalisedFacilities;
             needsUpdate = true;
           }
-        } else if (typeof existing.facilities !== 'string') {
-          updates.facilities = getRandomFacilitySubset().join(',');
+        } else {
+          // If facilities is missing or not an array, set an array of facilities
+          updates.facilities = getRandomFacilitySubset();
           needsUpdate = true;
         }
 
@@ -297,7 +302,7 @@ async function seed() {
       const assignedReviews = getRandomSubset(reviews, 5, 7); // 5 to 7 reviews
       const assignedGalleries = getRandomSubset(galleries, 3, 8); // 3 to 8 galleries
 
-          const selectedFacilities = getRandomFacilitySubset().join(',');
+          const selectedFacilities = getRandomFacilitySubset();
 
       const image =
         propertiesImages.length - 1 >= i

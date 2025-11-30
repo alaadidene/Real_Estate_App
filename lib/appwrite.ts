@@ -1886,3 +1886,65 @@ export function calculateRefund(
     };
   }
 }
+
+/**
+ * Create a payment record (mock integration)
+ */
+export async function createPaymentRecord(paymentData: {
+  bookingId: string;
+  userId: string;
+  amount: number;
+  currency?: string;
+  paymentMethod?: string;
+  paymentGateway?: string;
+  transactionId?: string;
+  gatewayResponse?: string;
+}): Promise<PaymentDocument> {
+  try {
+    const payload = {
+      bookingId: paymentData.bookingId,
+      userId: paymentData.userId,
+      amount: paymentData.amount,
+      currency: paymentData.currency || 'USD',
+      paymentMethod: paymentData.paymentMethod || 'card',
+      paymentGateway: paymentData.paymentGateway || 'mock',
+      transactionId: paymentData.transactionId || ID.unique(),
+      status: 'succeeded',
+      gatewayResponse: paymentData.gatewayResponse || null,
+    } as any;
+
+    const payment = await databases.createDocument<PaymentDocument>(
+      config.databaseId!,
+      config.paymentsCollectionId!,
+      ID.unique(),
+      payload
+    );
+
+    // Mark booking as paid
+    try {
+      await updateBookingPaymentStatus(paymentData.bookingId, 'paid');
+    } catch (e) {
+      console.warn('Failed to update booking payment status after payment:', e);
+    }
+
+    return payment;
+  } catch (error) {
+    console.error('Error creating payment record:', error);
+    throw error;
+  }
+}
+
+export async function getUserPayments(userId: string): Promise<PaymentDocument[]> {
+  try {
+    const res = await databases.listDocuments<PaymentDocument>(
+      config.databaseId!,
+      config.paymentsCollectionId!,
+      [Query.equal('userId', userId), Query.orderDesc('$createdAt')]
+    );
+
+    return res.documents;
+  } catch (error) {
+    console.error('Error fetching user payments:', error);
+    return [];
+  }
+}

@@ -1,5 +1,5 @@
 import icons from "@/constants/icons";
-import { BookingDocument, cancelBooking, getCurrentUser, getUserBookings } from "@/lib/appwrite";
+import { BookingDocument, cancelBooking, createPaymentRecord, getCurrentUser, getUserBookings } from "@/lib/appwrite";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
@@ -284,7 +284,25 @@ export default function Bookings() {
                   {booking.status === "confirmed" && booking.paymentStatus === "unpaid" && (
                     <TouchableOpacity
                       onPress={() => {
-                        Alert.alert("Payment", "Payment integration coming soon!");
+                        (async () => {
+                          try {
+                            const user = await getCurrentUser();
+                            if (!user) {
+                              router.push('/sign-in' as any);
+                              return;
+                            }
+                            await createPaymentRecord({
+                              bookingId: booking.$id,
+                              userId: user.$id,
+                              amount: booking.totalPrice,
+                            } as any);
+                            Alert.alert('Success', 'Payment completed');
+                            loadBookings();
+                          } catch (e) {
+                            console.error('Payment error', e);
+                            Alert.alert('Error', 'Payment failed');
+                          }
+                        })();
                       }}
                       className="flex-1 bg-primary-300 py-2 rounded-full"
                     >
