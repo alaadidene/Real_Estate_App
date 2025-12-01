@@ -1,22 +1,21 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Dimensions,
-    FlatList,
-    Image,
-    Linking,
-    Platform,
-    ScrollView,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Dimensions,
+  FlatList,
+  Image,
+  Linking,
+  Platform,
+  ScrollView,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 import Comment from "@/components/Comment";
 import DateRangePicker from "@/components/DateRangePicker";
-import DirectionsButton from "@/components/DirectionsButton";
 import FavoriteButton from "@/components/FavoriteButton";
 import PropertiesMap from "@/components/PropertiesMap";
 import ShareModal from "@/components/ShareModal";
@@ -135,16 +134,12 @@ const Property = () => {
         return;
       }
 
-<<<<<<< HEAD
       if (!property) {
         Alert.alert('Erreur', 'Propriété introuvable');
         return;
       }
 
       const agentId = typeof property.agent === 'string' ? property.agent : property.agent?.$id || property.agent?.id;
-=======
-      const agentId = typeof property!.agent === 'string' ? property!.agent : property!.agent?.$id || property!.agent?.id;
->>>>>>> 0a842bf75a9b5918ff90dcf1dbee189b575b4c91
 
       const booking = await createBooking({
         propertyId: property!.$id,
@@ -468,14 +463,14 @@ const Property = () => {
             )}
           </View>
 
-            {prop.gallery && prop.gallery.length > 0 && (
+            {property.gallery && property.gallery.length > 0 && (
             <View className="mt-7">
               <Text className="text-black-300 text-xl font-rubik-bold">
                 Gallery
               </Text>
               <FlatList
                 contentContainerStyle={{ paddingRight: 20 }}
-                data={prop.gallery}
+                data={property.gallery}
                 keyExtractor={(item) => item.$id}
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -494,100 +489,22 @@ const Property = () => {
             <Text className="text-black-300 text-xl font-rubik-bold">
               Location
             </Text>
-<<<<<<< HEAD
-            <View className="flex flex-row items-center justify-between mt-4">
-              <View className="flex flex-row items-center gap-2 flex-1">
-                <Image source={icons.location} className="w-7 h-7" />
-                <Text className="text-black-200 text-sm font-rubik-medium flex-1" numberOfLines={2}>
-                  {property.address}
-                </Text>
-              </View>
-              {(() => {
-                console.log('🗺️ Property geolocation data:', property.geolocation);
-                console.log('📍 User location:', location);
-                
-                if (!property.geolocation) {
-                  console.log('❌ No geolocation data for this property');
-                  // Ajoutons des coordonnées par défaut pour Tozeur si l'adresse contient "Tozeur"
-                  if (property.address && property.address.toLowerCase().includes('tozeur')) {
-                    console.log('🎯 Using fallback coordinates for Tozeur');
-                    return (
-                      <DirectionsButton
-                        latitude={33.9197}
-                        longitude={8.1335}
-                        propertyName={property.name}
-                        userLatitude={location?.latitude}
-                        userLongitude={location?.longitude}
-                        style={{ marginLeft: 12 }}
-                      />
-                    );
-                  }
-                  return null;
-                }
-                
-                try {
-                  let geo;
-                  if (typeof property.geolocation === 'string') {
-                    try {
-                      geo = JSON.parse(property.geolocation);
-                    } catch {
-                      // Si ce n'est pas du JSON, essayons "lat,lng"
-                      const coords = property.geolocation.split(',');
-                      if (coords.length === 2) {
-                        geo = {
-                          lat: parseFloat(coords[0].trim()),
-                          lng: parseFloat(coords[1].trim())
-                        };
-                      }
-                    }
-                  } else {
-                    geo = property.geolocation;
-                  }
-                  
-                  console.log('🎯 Parsed geolocation:', geo);
-                  
-                  // Supportons différents formats de coordonnées
-                  const lat = geo?.lat || geo?.latitude;
-                  const lng = geo?.lng || geo?.longitude;
-                  
-                  if (lat && lng && !isNaN(lat) && !isNaN(lng)) {
-                    console.log('✅ Valid coordinates found, showing DirectionsButton:', { lat, lng });
-                    return (
-                      <DirectionsButton
-                        latitude={parseFloat(lat)}
-                        longitude={parseFloat(lng)}
-                        propertyName={property.name}
-                        userLatitude={location?.latitude}
-                        userLongitude={location?.longitude}
-                        style={{ marginLeft: 12 }}
-                      />
-                    );
-                  } else {
-                    console.log('❌ Invalid coordinates:', { lat, lng, originalGeo: geo });
-                  }
-                } catch (e) {
-                  console.error('💥 Error parsing geolocation for directions:', e);
-                }
-                return null;
-              })()}
-=======
             <View className="flex flex-row items-center justify-start mt-4 gap-2">
               <Image source={icons.location} className="w-7 h-7" />
               <Text className="text-black-200 text-sm font-rubik-medium">
-                {prop.address}
+                {property.address}
               </Text>
->>>>>>> 0a842bf75a9b5918ff90dcf1dbee189b575b4c91
             </View>
 
-            {prop.geolocation && (() => {
+            {property.geolocation && (() => {
               try {
-                const geo = typeof prop.geolocation === 'string' 
-                  ? JSON.parse(prop.geolocation) 
-                  : prop.geolocation;
+                const geo = typeof property.geolocation === 'string' 
+                  ? JSON.parse(property.geolocation) 
+                  : property.geolocation;
                 return (
                   <View className="h-52 w-full mt-5 rounded-xl overflow-hidden">
                     <PropertiesMap 
-                      properties={[prop]}
+                      properties={[property]}
                     />
                   </View>
                 );
@@ -603,13 +520,13 @@ const Property = () => {
             })()}
           </View>
 
-          {prop.reviews && prop.reviews.length > 0 && (
+          {property.reviews && property.reviews.length > 0 && (
             <View className="mt-7">
               <View className="flex flex-row items-center justify-between">
                 <View className="flex flex-row items-center">
                   <Image source={icons.star} className="size-6" />
                   <Text className="text-black-300 text-xl font-rubik-bold ml-2">
-                    {prop.rating} ({prop.reviews.length} reviews)
+                    {property.rating} ({property.reviews.length} reviews)
                   </Text>
                 </View>
 
@@ -621,7 +538,7 @@ const Property = () => {
               </View>
 
               <View className="mt-5">
-                <Comment item={prop.reviews[0]} />
+                <Comment item={property.reviews[0]} />
               </View>
             </View>
           )}
